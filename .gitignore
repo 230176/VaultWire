@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments and environment variables
+.venv/
+.env
+/vault_storage/
+
+# Editor and operating-system files
+.vscode/
+.idea/
+Thumbs.db
+
+.env
+vault_storage/
+__pycache__/
+.venv/
