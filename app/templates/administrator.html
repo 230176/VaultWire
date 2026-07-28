@@ -1,0 +1,12 @@
+{% extends "app_shell.html" %}
+
+{% block title %}Administrator workspace · NepShield{% endblock %}
+
+{% block workspace %}
+  <section class="welcome-card">
+    <p class="eyebrow">Administrator workspace</p>
+    <h1>Welcome, {{ user.username }}.</h1>
+    <p>You are signed in with administrator access. Your NepShield workspace is ready.</p>
+    <div class="access-badge"><span aria-hidden="true">✓</span> Administrator access verified</div>
+  </section>
+{% endblock %}

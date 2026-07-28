@@ -1,0 +1,60 @@
+{% extends "app_shell.html" %}
+
+{% block title %}My Vault · NepShield{% endblock %}
+
+{% block workspace %}
+  <section class="users-heading vault-heading">
+    <p class="eyebrow">Employee workspace</p>
+    <h1>My Vault</h1>
+    <p>Upload private work documents. NepShield encrypts every file before it reaches vault storage.</p>
+  </section>
+
+  {% if error %}<div class="form-alert" role="alert">{{ error }}</div>{% endif %}
+  {% if success %}<div class="form-alert form-success" role="status">{{ success }}</div>{% endif %}
+
+  <div class="vault-layout">
+    <section class="management-card" aria-labelledby="upload-heading">
+      <h2 id="upload-heading">Upload a document</h2>
+      <p class="card-intro">PDF, DOCX, XLSX, CSV, or UTF-8 TXT. Maximum size: {{ max_file_size }}.</p>
+      <form class="management-form" method="post" action="/employee/vault" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="document">Document</label>
+        <input id="document" name="document" type="file" accept=".pdf,.docx,.xlsx,.csv,.txt" required>
+        <button type="submit">Encrypt and upload</button>
+      </form>
+      <p class="vault-privacy-note">You retain owner access. Other employees can download only after an administrator approves their access request.</p>
+    </section>
+
+    <section class="management-card" aria-labelledby="documents-heading">
+      <div class="list-heading">
+        <h2 id="documents-heading">Your documents</h2>
+        <span class="count-badge">{{ documents | length }} total</span>
+      </div>
+      {% if documents %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Document</th><th>Size</th><th>Uploaded</th><th><span class="visually-hidden">Action</span></th></tr>
+            </thead>
+            <tbody>
+              {% for document in documents %}
+                <tr>
+                  <td>{{ document.original_filename }}</td>
+                  <td class="muted-cell">{{ document.plaintext_size | filesize }}</td>
+                  <td class="muted-cell">{{ document.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</td>
+                  <td><a class="button-download" href="/employee/vault/{{ document.id }}/download">Download</a></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="empty-state">
+          <div class="empty-state-icon" aria-hidden="true">◇</div>
+          <h3>Your vault is empty</h3>
+          <p>Upload your first document to create an encrypted vault record.</p>
+        </div>
+      {% endif %}
+    </section>
+  </div>
+{% endblock %}

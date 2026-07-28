@@ -1,0 +1,57 @@
+{% extends "app_shell.html" %}
+
+{% block title %}Request Access · NepShield{% endblock %}
+
+{% block workspace %}
+  <section class="users-heading">
+    <p class="eyebrow">Employee workspace</p>
+    <h1>Request Access</h1>
+    <p>Request access to a document owned by another employee. A reason is required.</p>
+  </section>
+
+  {% if error %}<div class="form-alert" role="alert">{{ error }}</div>{% endif %}
+  {% if success %}<div class="form-alert form-success" role="status">{{ success }}</div>{% endif %}
+
+  <section class="management-card users-table-card" aria-labelledby="available-documents">
+    <div class="list-heading">
+      <h2 id="available-documents">Available documents</h2>
+      <span class="count-badge">{{ documents | length }} total</span>
+    </div>
+    {% if documents %}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Document</th><th>Owner</th><th>Uploaded</th><th>Request state / action</th></tr></thead>
+          <tbody>
+            {% for item in documents %}
+              <tr>
+                <td>{{ item.document.original_filename }}</td>
+                <td class="muted-cell">{{ item.owner.display_name if item.owner else 'Unavailable' }}</td>
+                <td class="muted-cell">{{ item.document.created_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
+                <td>
+                  {% if item.access_kind.value == 'shared' %}
+                    <span class="status-badge status-enabled">Access active</span>
+                  {% elif item.latest_request and item.latest_request.status.value == 'pending' %}
+                    <span class="status-badge status-pending">Pending</span>
+                  {% else %}
+                    {% if item.latest_request %}
+                      <span class="status-badge status-{{ item.latest_request.status.value }}">Last: {{ item.latest_request.status.value | title }}</span>
+                    {% endif %}
+                    <form method="post" action="/employee/access/request" class="decision-form">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <input type="hidden" name="document_id" value="{{ item.document.id }}">
+                      <label for="reason-{{ item.document.id }}">Reason</label>
+                      <textarea id="reason-{{ item.document.id }}" name="reason" maxlength="1000" required></textarea>
+                      <button type="submit">Request access</button>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state"><h3>No documents available</h3><p>There are no other usable vault documents to request.</p></div>
+    {% endif %}
+  </section>
+{% endblock %}

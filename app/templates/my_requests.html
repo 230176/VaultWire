@@ -1,0 +1,42 @@
+{% extends "app_shell.html" %}
+
+{% block title %}My Requests · NepShield{% endblock %}
+
+{% block workspace %}
+  <section class="users-heading">
+    <p class="eyebrow">Employee workspace</p>
+    <h1>My Requests</h1>
+    <p>Review pending requests and retained administrator decisions.</p>
+  </section>
+  <section class="management-card users-table-card">
+    {% if requests %}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Document</th><th>Owner</th><th>Reason</th><th>Requested</th><th>Status</th><th>Decision</th></tr></thead>
+          <tbody>
+            {% for item in requests %}
+              <tr>
+                <td>{{ item.document.original_filename if item.document else 'Unavailable document' }}</td>
+                <td class="muted-cell">{{ item.owner.display_name if item.owner else 'Unavailable' }}</td>
+                <td>{{ item.request.reason }}</td>
+                <td class="muted-cell">{{ item.request.requested_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
+                <td><span class="status-badge status-{{ item.request.status.value }}">{{ item.request.status.value | title }}</span></td>
+                <td class="muted-cell">
+                  {% if item.request.decided_at %}
+                    {{ item.request.decision_reason }}<br>
+                    By {{ item.decider.display_name if item.decider else 'Administrator' }} · {{ item.request.decided_at.strftime('%Y-%m-%d %H:%M UTC') }}
+                    {% if item.request.status.value == 'approved' %}<br>Access expires: {{ item.request.permission_expires_at.strftime('%Y-%m-%d %H:%M UTC') if item.request.permission_expires_at else 'No expiry' }}{% endif %}
+                  {% else %}
+                    Awaiting review
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state"><h3>No access requests</h3><p>Your submitted requests will appear here.</p></div>
+    {% endif %}
+  </section>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block body_class %}app-page{% endblock %}
+
+{% block body %}
+  <div class="app-shell">
+    <header class="app-header">
+      <a class="app-brand" href="/" aria-label="NepShield home">
+        <span class="brand-mark brand-mark-small" aria-hidden="true">N</span>
+        <span>NepShield</span>
+      </a>
+      {% if user.role.value == "administrator" %}
+        <nav class="app-nav" aria-label="Administrator navigation">
+          <a href="/administrator">Overview</a>
+          <a href="/administrator/users">Users</a>
+          <a href="/administrator/access-requests">Access Requests</a>
+        </nav>
+      {% else %}
+        <nav class="app-nav" aria-label="Employee navigation">
+          <a href="/employee">Overview</a>
+          <a href="/employee/vault">My Vault</a>
+          <a href="/employee/access/request">Request Access</a>
+          <a href="/employee/access/requests">My Requests</a>
+          <a href="/employee/shared">Shared With Me</a>
+        </nav>
+      {% endif %}
+      <div class="account-area">
+        <div class="account-copy">
+          <strong>{{ user.username }}</strong>
+          <span>{{ user.role.value | title }}</span>
+        </div>
+        <form method="post" action="/logout">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button-secondary">Sign out</button>
+        </form>
+      </div>
+    </header>
+    <main class="workspace">
+      {% block workspace %}{% endblock %}
+    </main>
+  </div>
+{% endblock %}

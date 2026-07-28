@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Sign in · NepShield{% endblock %}
+{% block body_class %}login-page{% endblock %}
+
+{% block body %}
+  <main class="login-layout">
+    <section class="brand-panel" aria-labelledby="brand-title">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true">N</span>
+        <span>NepShield</span>
+      </div>
+      <div class="brand-message">
+        <p class="eyebrow">Protected workspace</p>
+        <h1 id="brand-title">A secure place for your team to work.</h1>
+        <p>Sign in with your NepShield account to continue to your authorized workspace.</p>
+      </div>
+      <p class="brand-footnote">Built for focused, role-based access.</p>
+    </section>
+
+    <section class="login-panel" aria-labelledby="login-title">
+      <div class="login-card">
+        <div class="mobile-brand">
+          <span class="brand-mark" aria-hidden="true">N</span>
+          <span>NepShield</span>
+        </div>
+        <p class="eyebrow">Welcome back</p>
+        <h2 id="login-title">Sign in to NepShield</h2>
+        <p class="login-intro">Enter the credentials provided by your administrator.</p>
+
+        {% if error %}
+          <div class="form-alert" role="alert">{{ error }}</div>
+        {% endif %}
+
+        <form method="post" action="/login" class="login-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label for="username">Username</label>
+          <input
+            id="username"
+            name="username"
+            type="text"
+            value="{{ username | default('') }}"
+            autocomplete="username"
+            autocapitalize="none"
+            spellcheck="false"
+            maxlength="64"
+            required
+            autofocus
+          >
+
+          <label for="password">Password</label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            maxlength="1024"
+            required
+          >
+
+          <button type="submit">Sign in securely</button>
+        </form>
+        <p class="support-note">Having trouble signing in? Contact your NepShield administrator.</p>
+      </div>
+    </section>
+  </main>
+{% endblock %}

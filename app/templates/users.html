@@ -1,0 +1,80 @@
+{% extends "app_shell.html" %}
+
+{% block title %}User management · NepShield{% endblock %}
+
+{% block workspace %}
+  <section class="users-heading">
+    <div>
+      <p class="eyebrow">Administrator workspace</p>
+      <h1>Users</h1>
+      <p>Create employee accounts and manage account availability.</p>
+    </div>
+  </section>
+
+  {% if success %}
+    <div class="form-alert form-success" role="status">{{ success }}</div>
+  {% endif %}
+  {% if error %}
+    <div class="form-alert" role="alert">{{ error }}</div>
+  {% endif %}
+
+  <div class="users-layout">
+    <section class="management-card" aria-labelledby="create-user-title">
+      <p class="eyebrow">New employee</p>
+      <h2 id="create-user-title">Create an employee account</h2>
+      <p class="card-intro">The employee will use this password for their first sign-in.</p>
+      <form method="post" action="/administrator/users" class="management-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="display_name">Display name</label>
+        <input id="display_name" name="display_name" type="text" maxlength="100" required value="{{ form_data.display_name | default('') }}" autocomplete="name">
+        <label for="new_username">Username</label>
+        <input id="new_username" name="username" type="text" maxlength="64" required value="{{ form_data.username | default('') }}" autocapitalize="none" spellcheck="false" autocomplete="username">
+        <label for="new_password">Initial password</label>
+        <input id="new_password" name="password" type="password" minlength="12" maxlength="1024" required autocomplete="new-password">
+        <button type="submit">Create employee</button>
+      </form>
+    </section>
+
+    <section class="management-card users-table-card" aria-labelledby="user-list-title">
+      <div class="list-heading">
+        <div>
+          <p class="eyebrow">Accounts</p>
+          <h2 id="user-list-title">User directory</h2>
+        </div>
+        <span class="count-badge">{{ users | length }} total</span>
+      </div>
+      {% if users %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Display name</th><th>Username</th><th>Role</th><th>Status</th><th>Created</th><th><span class="visually-hidden">Action</span></th></tr></thead>
+            <tbody>
+              {% for account in users %}
+                <tr>
+                  <td>{{ account.display_name }}</td>
+                  <td class="muted-cell">{{ account.username }}</td>
+                  <td><span class="role-badge">{{ account.role.value | title }}</span></td>
+                  <td><span class="status-badge {{ 'status-enabled' if account.enabled else 'status-disabled' }}">{{ 'Enabled' if account.enabled else 'Disabled' }}</span></td>
+                  <td class="muted-cell">{{ account.created_at.strftime('%Y-%m-%d %H:%M UTC') if account.created_at else 'Unknown' }}</td>
+                  <td>
+                    {% if account.id == user.id and account.enabled %}
+                      <span class="self-note">Current account</span>
+                    {% else %}
+                      <form method="post" action="/administrator/users/status" class="inline-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="hidden" name="username" value="{{ account.username }}">
+                        <input type="hidden" name="enabled" value="{{ 'false' if account.enabled else 'true' }}">
+                        <button type="submit" class="{{ 'button-danger' if account.enabled else 'button-secondary' }}">{{ 'Disable' if account.enabled else 'Re-enable' }}</button>
+                      </form>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="empty-state"><h3>No accounts yet</h3><p>Create the first employee account using the form.</p></div>
+      {% endif %}
+    </section>
+  </div>
+{% endblock %}

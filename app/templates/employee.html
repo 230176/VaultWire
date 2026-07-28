@@ -1,0 +1,12 @@
+{% extends "app_shell.html" %}
+
+{% block title %}Employee workspace · NepShield{% endblock %}
+
+{% block workspace %}
+  <section class="welcome-card">
+    <p class="eyebrow">Employee workspace</p>
+    <h1>Welcome, {{ user.username }}.</h1>
+    <p>You are signed in with employee access. Your NepShield workspace is ready.</p>
+    <div class="access-badge"><span aria-hidden="true">✓</span> Employee access verified</div>
+  </section>
+{% endblock %}

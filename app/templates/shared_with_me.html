@@ -1,0 +1,33 @@
+{% extends "app_shell.html" %}
+
+{% block title %}Shared With Me · NepShield{% endblock %}
+
+{% block workspace %}
+  <section class="users-heading">
+    <p class="eyebrow">Employee workspace</p>
+    <h1>Shared With Me</h1>
+    <p>Documents with a currently active, non-revoked, non-expired permission.</p>
+  </section>
+  <section class="management-card users-table-card">
+    {% if documents %}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Document</th><th>Owner</th><th>Uploaded</th><th>Access expires</th><th><span class="visually-hidden">Action</span></th></tr></thead>
+          <tbody>
+            {% for item in documents %}
+              <tr>
+                <td>{{ item.document.original_filename }}</td>
+                <td class="muted-cell">{{ item.owner.display_name if item.owner else 'Unavailable' }}</td>
+                <td class="muted-cell">{{ item.document.created_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
+                <td class="muted-cell">{{ item.permission.expires_at.strftime('%Y-%m-%d %H:%M UTC') if item.permission.expires_at else 'No expiry' }}</td>
+                <td><a class="button-download" href="/employee/vault/{{ item.document.id }}/download">Download</a></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state"><h3>No documents shared with you</h3><p>Approved, currently valid permissions will appear here.</p></div>
+    {% endif %}
+  </section>
+{% endblock %}

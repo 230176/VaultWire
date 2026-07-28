@@ -1,0 +1,98 @@
+{% extends "app_shell.html" %}
+
+{% block title %}Access Requests · NepShield{% endblock %}
+
+{% block workspace %}
+  <section class="users-heading">
+    <p class="eyebrow">Administrator workspace</p>
+    <h1>Access Requests</h1>
+    <p>Review employee requests and revoke active shared permissions. This page does not grant administrators document-content access.</p>
+  </section>
+
+  {% if error %}<div class="form-alert" role="alert">{{ error }}</div>{% endif %}
+  {% if success %}<div class="form-alert form-success" role="status">{{ success }}</div>{% endif %}
+
+  <section class="management-card users-table-card" aria-labelledby="request-list-title">
+    <div class="list-heading"><h2 id="request-list-title">Request history</h2><span class="count-badge">{{ requests | length }} total</span></div>
+    {% if requests %}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Requester</th><th>Document</th><th>Owner</th><th>Reason</th><th>Requested</th><th>Status / decision</th></tr></thead>
+          <tbody>
+            {% for item in requests %}
+              <tr>
+                <td>{{ item.requester.display_name if item.requester else 'Unavailable' }}<br><span class="muted-cell">{{ item.requester.username if item.requester else '' }}</span></td>
+                <td>{{ item.document.original_filename if item.document else 'Unavailable document' }}</td>
+                <td class="muted-cell">{{ item.owner.display_name if item.owner else 'Unavailable' }}</td>
+                <td>{{ item.request.reason }}</td>
+                <td class="muted-cell">{{ item.request.requested_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
+                <td>
+                  <span class="status-badge status-{{ item.request.status.value }}">{{ item.request.status.value | title }}</span>
+                  {% if item.request.status.value == 'pending' %}
+                    <form method="post" action="/administrator/access-requests/{{ item.request.id }}/decision" class="decision-form">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <label for="decision-reason-{{ item.request.id }}">Decision reason</label>
+                      <textarea id="decision-reason-{{ item.request.id }}" name="decision_reason" maxlength="1000" required></textarea>
+                      <label for="expiry-{{ item.request.id }}">Expiry (optional, UTC)</label>
+                      <input id="expiry-{{ item.request.id }}" name="expires_at" type="datetime-local">
+                      <div class="button-row">
+                        <button type="submit" name="decision" value="approved">Approve</button>
+                        <button type="submit" name="decision" value="rejected" class="button-danger">Reject</button>
+                      </div>
+                    </form>
+                  {% else %}
+                    <p class="decision-copy">{{ item.request.decision_reason }}<br>{{ item.request.decided_at.strftime('%Y-%m-%d %H:%M UTC') if item.request.decided_at else '' }}</p>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state"><h3>No access requests</h3><p>Employee requests will appear here.</p></div>
+    {% endif %}
+  </section>
+
+  <section class="management-card users-table-card permission-history" aria-labelledby="permissions-title">
+    <div class="list-heading"><h2 id="permissions-title">Shared permissions</h2><span class="count-badge">{{ permissions | length }} relationships</span></div>
+    {% if permissions %}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Grantee</th><th>Document</th><th>Owner</th><th>Granted</th><th>Expires</th><th>Status / action</th></tr></thead>
+          <tbody>
+            {% for item in permissions %}
+              <tr>
+                <td>{{ item.grantee.display_name if item.grantee else 'Unavailable' }}</td>
+                <td>{{ item.document.original_filename if item.document else 'Unavailable document' }}</td>
+                <td class="muted-cell">{{ item.owner.display_name if item.owner else 'Unavailable' }}</td>
+                <td class="muted-cell">{{ item.permission.granted_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
+                <td class="muted-cell">{{ item.permission.expires_at.strftime('%Y-%m-%d %H:%M UTC') if item.permission.expires_at else 'No expiry' }}</td>
+                <td>
+                  {% if item.access_kind.value == 'shared' %}
+                    <span class="status-badge status-enabled">Active</span>
+                    <form method="post" action="/administrator/permissions/{{ item.permission.id }}/revoke" class="decision-form">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <label for="revoke-{{ item.permission.id }}">Revocation reason</label>
+                      <textarea id="revoke-{{ item.permission.id }}" name="revocation_reason" maxlength="1000" required></textarea>
+                      <button type="submit" class="button-danger">Revoke</button>
+                    </form>
+                  {% elif item.access_kind.value == 'expired' %}
+                    <span class="status-badge status-pending">Expired</span>
+                  {% elif item.access_kind.value == 'unusable' %}
+                    <span class="status-badge status-disabled">Document unavailable</span>
+                  {% else %}
+                    <span class="status-badge status-rejected">Revoked</span>
+                    <p class="decision-copy">{{ item.permission.revocation_reason }}</p>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state"><h3>No permission relationships</h3><p>Approved requests create permissions here.</p></div>
+    {% endif %}
+  </section>
+{% endblock %}
