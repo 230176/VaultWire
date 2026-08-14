@@ -29,8 +29,16 @@ class DocumentAccessKind(StrEnum):
     DENIED = "denied"
     EXPIRED = "expired"
     REVOKED = "revoked"
+    LOCKED = "locked"
     UNUSABLE = "unusable"
     NOT_FOUND = "not_found"
+
+
+class DocumentState(StrEnum):
+    """Administrator-governed state of encrypted document content."""
+
+    ACTIVE = "active"
+    LOCKED = "locked"
 
 
 @dataclass(frozen=True)
@@ -59,6 +67,10 @@ class VaultDocument:
     nonce: bytes
     created_at: datetime
     usable: bool = True
+    state: DocumentState = DocumentState.ACTIVE
+    locked_at: datetime | None = None
+    locked_by: Any = None
+    lock_reason: str | None = None
 
 
 @dataclass(frozen=True)

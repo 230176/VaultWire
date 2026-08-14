@@ -22,7 +22,7 @@
             {% for item in requests %}
               <tr>
                 <td>{{ item.requester.display_name if item.requester else 'Unavailable' }}<br><span class="muted-cell">{{ item.requester.username if item.requester else '' }}</span></td>
-                <td>{{ item.document.original_filename if item.document else 'Unavailable document' }}</td>
+                <td>{{ item.document.original_filename if item.document else 'Unavailable document' }}{% if item.document and item.document.state.value == 'locked' %}<br><span class="status-badge status-disabled">Locked</span>{% endif %}</td>
                 <td class="muted-cell">{{ item.owner.display_name if item.owner else 'Unavailable' }}</td>
                 <td>{{ item.request.reason }}</td>
                 <td class="muted-cell">{{ item.request.requested_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
@@ -36,7 +36,7 @@
                       <label for="expiry-{{ item.request.id }}">Expiry (optional, UTC)</label>
                       <input id="expiry-{{ item.request.id }}" name="expires_at" type="datetime-local">
                       <div class="button-row">
-                        <button type="submit" name="decision" value="approved">Approve</button>
+                        {% if not item.document or item.document.state.value != 'locked' %}<button type="submit" name="decision" value="approved">Approve</button>{% endif %}
                         <button type="submit" name="decision" value="rejected" class="button-danger">Reject</button>
                       </div>
                     </form>
@@ -81,6 +81,16 @@
                     <span class="status-badge status-pending">Expired</span>
                   {% elif item.access_kind.value == 'unusable' %}
                     <span class="status-badge status-disabled">Document unavailable</span>
+                  {% elif item.access_kind.value == 'locked' %}
+                    <span class="status-badge status-disabled">Document locked</span>
+                    {% if item.permission.active and not item.permission.revoked_at %}
+                      <form method="post" action="/administrator/permissions/{{ item.permission.id }}/revoke" class="decision-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <label for="revoke-{{ item.permission.id }}">Revocation reason</label>
+                        <textarea id="revoke-{{ item.permission.id }}" name="revocation_reason" maxlength="1000" required></textarea>
+                        <button type="submit" class="button-danger">Revoke</button>
+                      </form>
+                    {% endif %}
                   {% else %}
                     <span class="status-badge status-rejected">Revoked</span>
                     <p class="decision-copy">{{ item.permission.revocation_reason }}</p>

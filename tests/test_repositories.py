@@ -7,7 +7,9 @@ from app.repositories import (
     MongoAccessRequestRepository,
     MongoDocumentPermissionRepository,
     MongoUserRepository,
+    MongoVaultRepository,
 )
+from app.models import DocumentState
 
 
 class IndexCollection:
@@ -84,3 +86,23 @@ def test_permission_index_enforces_one_grantee_document_relationship():
     )
     assert relationship_index[0] == [("grantee_id", 1), ("document_id", 1)]
     assert relationship_index[1]["unique"] is True
+
+
+def test_legacy_vault_document_without_state_defaults_to_active():
+    document = MongoVaultRepository._to_document(
+        {
+            "_id": "document-id",
+            "owner_id": "owner-id",
+            "original_filename": "legacy.txt",
+            "media_type": "text/plain",
+            "plaintext_size": 6,
+            "storage_name": "0123456789abcdef0123456789abcdef.vault",
+            "nonce": b"123456789012",
+            "created_at": datetime(2026, 8, 14, tzinfo=UTC),
+            "usable": True,
+        }
+    )
+
+    assert document is not None
+    assert document.state is DocumentState.ACTIVE
+    assert document.locked_at is None

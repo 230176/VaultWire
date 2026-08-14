@@ -34,7 +34,7 @@
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>Document</th><th>Size</th><th>Uploaded</th><th><span class="visually-hidden">Action</span></th></tr>
+              <tr><th>Document</th><th>Size</th><th>Uploaded</th><th>Status</th><th><span class="visually-hidden">Action</span></th></tr>
             </thead>
             <tbody>
               {% for document in documents %}
@@ -42,7 +42,14 @@
                   <td>{{ document.original_filename }}</td>
                   <td class="muted-cell">{{ document.plaintext_size | filesize }}</td>
                   <td class="muted-cell">{{ document.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</td>
-                  <td><a class="button-download" href="/employee/vault/{{ document.id }}/download">Download</a></td>
+                  <td><span class="status-badge status-{{ 'disabled' if document.state.value == 'locked' else 'enabled' }}">{{ document.state.value | title }}</span></td>
+                  <td>
+                    {% if document.state.value == 'locked' %}
+                      <span class="muted-cell">Download unavailable</span>
+                    {% else %}
+                      <a class="button-download" href="/employee/vault/{{ document.id }}/download">Download</a>
+                    {% endif %}
+                  </td>
                 </tr>
               {% endfor %}
             </tbody>

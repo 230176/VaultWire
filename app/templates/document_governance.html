@@ -1,0 +1,60 @@
+{% extends "app_shell.html" %}
+
+{% block title %}Document Governance · NepShield{% endblock %}
+
+{% block workspace %}
+  <section class="users-heading">
+    <p class="eyebrow">Administrator workspace</p>
+    <h1>Document Governance</h1>
+    <p>Lock or unlock document content without changing ownership, requests, or shared permissions. This page does not provide document-content access.</p>
+  </section>
+
+  {% if error %}<div class="form-alert" role="alert">{{ error }}</div>{% endif %}
+  {% if success %}<div class="form-alert form-success" role="status">{{ success }}</div>{% endif %}
+
+  <section class="management-card users-table-card" aria-labelledby="document-list-title">
+    <div class="list-heading"><h2 id="document-list-title">Vault documents</h2><span class="count-badge">{{ documents | length }} total</span></div>
+    {% if documents %}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Document</th><th>Owner</th><th>Uploaded</th><th>Size</th><th>State</th><th>Governance action</th></tr></thead>
+          <tbody>
+            {% for item in documents %}
+              <tr>
+                <td>{{ item.document.original_filename }}</td>
+                <td>{{ item.owner.display_name if item.owner else 'Unavailable' }}<br><span class="muted-cell">{{ item.owner.username if item.owner else '' }}</span></td>
+                <td class="muted-cell">{{ item.document.created_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
+                <td class="muted-cell">{{ item.document.plaintext_size | filesize }}</td>
+                <td>
+                  <span class="status-badge status-{{ 'disabled' if item.document.state.value == 'locked' else 'enabled' }}">{{ item.document.state.value | title }}</span>
+                  {% if item.document.state.value == 'locked' %}
+                    <p class="decision-copy">By {{ item.locking_administrator.username if item.locking_administrator else 'unavailable administrator' }}<br>{{ item.document.locked_at.strftime('%Y-%m-%d %H:%M UTC') if item.document.locked_at else '' }}<br>{{ item.document.lock_reason }}</p>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if item.document.state.value == 'active' %}
+                    <form method="post" action="/administrator/documents/{{ item.document.id }}/lock" class="decision-form">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <label for="lock-{{ item.document.id }}">Lock reason</label>
+                      <textarea id="lock-{{ item.document.id }}" name="lock_reason" maxlength="1000" required></textarea>
+                      <button type="submit" class="button-danger">Lock document</button>
+                    </form>
+                  {% else %}
+                    <form method="post" action="/administrator/documents/{{ item.document.id }}/unlock" class="decision-form">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <label for="unlock-{{ item.document.id }}">Unlock reason</label>
+                      <textarea id="unlock-{{ item.document.id }}" name="unlock_reason" maxlength="1000" required></textarea>
+                      <button type="submit">Unlock document</button>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state"><h3>No vault documents</h3><p>Uploaded documents will appear here.</p></div>
+    {% endif %}
+  </section>
+{% endblock %}

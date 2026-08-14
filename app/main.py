@@ -16,7 +16,9 @@ from app.access_control import (
     AccessRequestNotFound,
     AccessRequestNotPending,
     DocumentAuthorizationService,
+    DocumentGovernanceNotFound,
     DocumentNotRequestable,
+    DocumentStateTransitionError,
     DuplicateAccessRequest,
     InvalidAccessReason,
     InvalidPermissionExpiry,
@@ -41,7 +43,7 @@ from app.dependencies import (
     get_vault_service,
     require_role,
 )
-from app.models import Role, User
+from app.models import DocumentState, Role, User
 from app.repositories import (
     MongoAccessRequestRepository,
     MongoAuditRepository,
@@ -556,6 +558,137 @@ async def administrator_landing(
         request=request,
         name="administrator.html",
         context={"user": user, "csrf_token": csrf.issue()},
+    )
+
+
+async def render_governance_page(
+    request: Request,
+    service: AccessControlService,
+    csrf: CsrfService,
+    user: User,
+    *,
+    error: str | None = None,
+    success: str | None = None,
+    response_status: int = status.HTTP_200_OK,
+):
+    return templates.TemplateResponse(
+        request=request,
+        name="document_governance.html",
+        context={
+            "user": user,
+            "documents": await service.list_governance_documents(user),
+            "csrf_token": csrf.issue(),
+            "error": error,
+            "success": success,
+        },
+        status_code=response_status,
+    )
+
+
+@app.get("/administrator/documents", response_class=HTMLResponse)
+async def administrator_documents(
+    request: Request,
+    success: str | None = Query(default=None),
+    user: User = Depends(require_role(Role.ADMINISTRATOR)),
+    service: AccessControlService = Depends(get_access_control_service),
+    csrf: CsrfService = Depends(get_csrf_service),
+):
+    messages = {
+        "locked": "Document locked successfully.",
+        "unlocked": "Document unlocked successfully.",
+    }
+    return await render_governance_page(
+        request, service, csrf, user, success=messages.get(success)
+    )
+
+
+async def change_document_state(
+    request: Request,
+    document_id: str,
+    target_state: DocumentState,
+    reason: str,
+    csrf_token: str,
+    user: User,
+    service: AccessControlService,
+    csrf: CsrfService,
+):
+    csrf.validate(csrf_token)
+    source_ip, user_agent = request_metadata(request)
+    try:
+        await service.change_document_state(
+            user,
+            document_id,
+            target_state,
+            reason,
+            source_ip=source_ip,
+            user_agent=user_agent,
+        )
+    except (InvalidAccessReason, DocumentStateTransitionError) as exc:
+        return await render_governance_page(
+            request,
+            service,
+            csrf,
+            user,
+            error=str(exc),
+            response_status=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    except DocumentGovernanceNotFound:
+        return await render_governance_page(
+            request,
+            service,
+            csrf,
+            user,
+            error="The requested document is unavailable.",
+            response_status=status.HTTP_404_NOT_FOUND,
+        )
+    return RedirectResponse(
+        "/administrator/documents?success="
+        + ("locked" if target_state is DocumentState.LOCKED else "unlocked"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/administrator/documents/{document_id}/lock")
+async def lock_document(
+    request: Request,
+    document_id: str,
+    lock_reason: str = Form(""),
+    csrf_token: str = Form(""),
+    user: User = Depends(require_role(Role.ADMINISTRATOR)),
+    service: AccessControlService = Depends(get_access_control_service),
+    csrf: CsrfService = Depends(get_csrf_service),
+):
+    return await change_document_state(
+        request,
+        document_id,
+        DocumentState.LOCKED,
+        lock_reason,
+        csrf_token,
+        user,
+        service,
+        csrf,
+    )
+
+
+@app.post("/administrator/documents/{document_id}/unlock")
+async def unlock_document(
+    request: Request,
+    document_id: str,
+    unlock_reason: str = Form(""),
+    csrf_token: str = Form(""),
+    user: User = Depends(require_role(Role.ADMINISTRATOR)),
+    service: AccessControlService = Depends(get_access_control_service),
+    csrf: CsrfService = Depends(get_csrf_service),
+):
+    return await change_document_state(
+        request,
+        document_id,
+        DocumentState.ACTIVE,
+        unlock_reason,
+        csrf_token,
+        user,
+        service,
+        csrf,
     )
 
 

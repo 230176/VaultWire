@@ -26,6 +26,7 @@ from app.models import (
     AccessRequestStatus,
     DocumentAccessKind,
     DocumentPermission,
+    DocumentState,
     Role,
     User,
 )
@@ -103,6 +104,46 @@ class InMemoryVault:
 
     async def list_for_owner(self, owner_id):
         return [item for item in self.documents.values() if item.owner_id == owner_id]
+
+    async def list_all(self):
+        return sorted(
+            self.documents.values(), key=lambda item: item.created_at, reverse=True
+        )
+
+    async def transition_state(
+        self,
+        document_id,
+        expected_state,
+        target_state,
+        changed_at,
+        changed_by,
+        reason,
+    ):
+        document = self.documents.get(document_id)
+        if (
+            document is None
+            or not document.usable
+            or document.state is not expected_state
+        ):
+            return None
+        if target_state is DocumentState.LOCKED:
+            document = replace(
+                document,
+                state=target_state,
+                locked_at=changed_at,
+                locked_by=changed_by,
+                lock_reason=reason,
+            )
+        else:
+            document = replace(
+                document,
+                state=target_state,
+                locked_at=None,
+                locked_by=None,
+                lock_reason=None,
+            )
+        self.documents[document_id] = document
+        return document
 
     async def list_usable_not_owned(self, owner_id):
         return [
@@ -376,6 +417,17 @@ def decide_request(client, request_id, decision="approved", reason="Approved for
             "decision_reason": reason,
             "expires_at": expiry,
             "csrf_token": csrf_token(client, "/administrator/access-requests"),
+        },
+        follow_redirects=False,
+    )
+
+
+def govern_document(client, document_id, action, reason="Governance review"):
+    return client.post(
+        f"/administrator/documents/{document_id}/{action}",
+        data={
+            f"{action}_reason": reason,
+            "csrf_token": csrf_token(client, "/administrator/documents"),
         },
         follow_redirects=False,
     )
@@ -715,3 +767,198 @@ def test_competing_administrator_decisions_cannot_make_rejection_grant_access(
     assert retained_request.status is AccessRequestStatus.REJECTED
     assert access_context["permissions"].items == {}
     assert sum(isinstance(result, AccessRequestNotPending) for result in results) == 1
+
+
+def test_document_governance_is_administrator_only_and_reasons_are_required(
+    access_context,
+):
+    document = upload_owner_document(access_context)
+    with TestClient(app.main.app) as employee_client:
+        sign_in(employee_client, "document.owner", "owner-password-2026")
+        page = employee_client.get("/administrator/documents")
+        attempted_lock = employee_client.post(
+            f"/administrator/documents/{document.id}/lock",
+            data={
+                "lock_reason": "Employee attempt",
+                "csrf_token": csrf_token(employee_client, "/employee"),
+            },
+        )
+    with TestClient(app.main.app) as admin_client:
+        sign_in(admin_client, "access.admin", "administrator-password-2026")
+        governance_page = admin_client.get("/administrator/documents")
+        missing_lock_reason = govern_document(admin_client, document.id, "lock", "   ")
+        locked = govern_document(admin_client, document.id, "lock", "Legal hold")
+        locked_metadata = access_context["documents"].documents[document.id]
+        locked_page = admin_client.get("/administrator/documents")
+        duplicate_lock = govern_document(admin_client, document.id, "lock", "Again")
+        missing_unlock_reason = govern_document(admin_client, document.id, "unlock", "")
+        unlocked = govern_document(admin_client, document.id, "unlock", "Hold released")
+        duplicate_unlock = govern_document(admin_client, document.id, "unlock", "Again")
+
+    assert page.status_code == 403 and attempted_lock.status_code == 403
+    assert governance_page.status_code == 200
+    assert "research.txt" in governance_page.text
+    assert document.storage_name not in governance_page.text
+    assert missing_lock_reason.status_code == 422
+    assert locked.status_code == 303
+    assert locked_metadata.state is DocumentState.LOCKED
+    assert locked_metadata.locked_by == access_context["administrator"].id
+    assert locked_metadata.locked_at.tzinfo is not None
+    assert locked_metadata.lock_reason == "Legal hold"
+    assert "Legal hold" in locked_page.text and "access.admin" in locked_page.text
+    assert duplicate_lock.status_code == 422
+    assert missing_unlock_reason.status_code == 422
+    assert unlocked.status_code == 303
+    assert duplicate_unlock.status_code == 422
+    retained = access_context["documents"].documents[document.id]
+    assert retained.state is DocumentState.ACTIVE
+    assert retained.locked_at is None and retained.locked_by is None
+    governance_events = [
+        event
+        for event in access_context["audit"].events
+        if event["event_type"] in {"vault.document_locked", "vault.document_unlocked"}
+    ]
+    assert [event["event_type"] for event in governance_events] == [
+        "vault.document_locked",
+        "vault.document_unlocked",
+    ]
+    assert governance_events[0]["reason"] == "Legal hold"
+    assert governance_events[0]["actor_user_id"] == access_context["administrator"].id
+    assert governance_events[0]["context"]["previous_state"] == "active"
+    assert governance_events[0]["context"]["state"] == "locked"
+    assert governance_events[0]["context"]["document_owner_id"] == access_context["owner"].id
+    assert governance_events[0]["context"]["transitioned_at"].tzinfo is not None
+    assert governance_events[1]["context"]["previous_state"] == "locked"
+    assert governance_events[1]["context"]["state"] == "active"
+
+
+def test_lock_overrides_owner_shared_and_direct_download_but_preserves_permission(
+    access_context,
+):
+    plaintext = b"locked shared content"
+    document = upload_owner_document(access_context, plaintext)
+    with TestClient(app.main.app) as requester_client:
+        sign_in(requester_client, "access.requester", "requester-password-2026")
+        assert submit_request(requester_client, document.id).status_code == 303
+    request = next(iter(access_context["requests"].items.values()))
+    with TestClient(app.main.app) as admin_client:
+        sign_in(admin_client, "access.admin", "administrator-password-2026")
+        assert decide_request(admin_client, request.id).status_code == 303
+        permission = next(iter(access_context["permissions"].items.values()))
+        assert govern_document(admin_client, document.id, "lock", "Investigation").status_code == 303
+        admin_download = admin_client.get(f"/employee/vault/{document.id}/download")
+
+    with TestClient(app.main.app) as owner_client:
+        sign_in(owner_client, "document.owner", "owner-password-2026")
+        vault_page = owner_client.get("/employee/vault")
+        owner_download = owner_client.get(f"/employee/vault/{document.id}/download")
+    with TestClient(app.main.app) as requester_client:
+        sign_in(requester_client, "access.requester", "requester-password-2026")
+        shared_page = requester_client.get("/employee/shared")
+        direct_download = requester_client.get(f"/employee/vault/{document.id}/download")
+
+    assert admin_download.status_code == 403
+    assert owner_download.status_code == 404 and direct_download.status_code == 404
+    assert "Locked" in vault_page.text and "Download unavailable" in vault_page.text
+    assert "research.txt" in shared_page.text and "Locked" in shared_page.text
+    assert "Download unavailable" in shared_page.text
+    assert f'href="/employee/vault/{document.id}/download"' not in shared_page.text
+    assert access_context["permissions"].items[permission.id] == permission
+    assert access_context["requests"].items[request.id].status is AccessRequestStatus.APPROVED
+    owner_decision = asyncio.run(
+        access_context["authorization"].authorize_read(access_context["owner"], document.id)
+    )
+    shared_decision = asyncio.run(
+        access_context["authorization"].authorize_read(
+            access_context["requester"], document.id
+        )
+    )
+    assert owner_decision.kind is DocumentAccessKind.LOCKED
+    assert shared_decision.kind is DocumentAccessKind.LOCKED
+
+
+def test_unlock_restores_only_a_still_valid_shared_permission(access_context):
+    plaintext = b"restored content"
+    document = upload_owner_document(access_context, plaintext)
+    with TestClient(app.main.app) as requester_client:
+        sign_in(requester_client, "access.requester", "requester-password-2026")
+        submit_request(requester_client, document.id)
+    request = next(iter(access_context["requests"].items.values()))
+    with TestClient(app.main.app) as admin_client:
+        sign_in(admin_client, "access.admin", "administrator-password-2026")
+        decide_request(admin_client, request.id)
+        permission = next(iter(access_context["permissions"].items.values()))
+        govern_document(admin_client, document.id, "lock", "Temporary hold")
+        govern_document(admin_client, document.id, "unlock", "Review complete")
+    with TestClient(app.main.app) as requester_client:
+        sign_in(requester_client, "access.requester", "requester-password-2026")
+        restored = requester_client.get(f"/employee/vault/{document.id}/download")
+    with TestClient(app.main.app) as owner_client:
+        sign_in(owner_client, "document.owner", "owner-password-2026")
+        owner_restored = owner_client.get(f"/employee/vault/{document.id}/download")
+
+    assert restored.status_code == 200 and restored.content == plaintext
+    assert owner_restored.status_code == 200
+    assert access_context["permissions"].items[permission.id] == permission
+
+
+@pytest.mark.parametrize("permission_state", ["revoked", "expired"])
+def test_unlock_does_not_restore_revoked_or_expired_shared_access(
+    access_context, permission_state
+):
+    document = upload_owner_document(access_context)
+    with TestClient(app.main.app) as requester_client:
+        sign_in(requester_client, "access.requester", "requester-password-2026")
+        submit_request(requester_client, document.id)
+    request = next(iter(access_context["requests"].items.values()))
+    with TestClient(app.main.app) as admin_client:
+        sign_in(admin_client, "access.admin", "administrator-password-2026")
+        decide_request(admin_client, request.id)
+        permission_id, permission = next(iter(access_context["permissions"].items.items()))
+        if permission_state == "revoked":
+            admin_client.post(
+                f"/administrator/permissions/{permission.id}/revoke",
+                data={
+                    "revocation_reason": "No longer needed",
+                    "csrf_token": csrf_token(admin_client, "/administrator/access-requests"),
+                },
+            )
+        else:
+            access_context["permissions"].items[permission_id] = replace(
+                permission, expires_at=datetime.now(UTC) - timedelta(seconds=1)
+            )
+        govern_document(admin_client, document.id, "lock", "Temporary hold")
+        govern_document(admin_client, document.id, "unlock", "Review complete")
+    with TestClient(app.main.app) as requester_client:
+        sign_in(requester_client, "access.requester", "requester-password-2026")
+        denied = requester_client.get(f"/employee/vault/{document.id}/download")
+
+    assert denied.status_code == 404
+    retained = access_context["permissions"].items[permission_id]
+    if permission_state == "revoked":
+        assert not retained.active and retained.revoked_at is not None
+    else:
+        assert retained.active and retained.expires_at < datetime.now(UTC)
+
+
+def test_locked_document_blocks_new_requests_and_approval_but_allows_rejection(
+    access_context,
+):
+    document, request = prepare_pending_request(access_context)
+    with TestClient(app.main.app) as admin_client:
+        sign_in(admin_client, "access.admin", "administrator-password-2026")
+        govern_document(admin_client, document.id, "lock", "Pending investigation")
+        approval = decide_request(admin_client, request.id, "approved", "Approve anyway")
+        rejection = decide_request(admin_client, request.id, "rejected", "Rejected during hold")
+    with TestClient(app.main.app) as requester_client:
+        sign_in(requester_client, "access.requester", "requester-password-2026")
+        request_page = requester_client.get("/employee/access/request")
+        new_request = submit_request(requester_client, document.id, "Another request")
+
+    assert approval.status_code == 404
+    assert rejection.status_code == 303
+    assert access_context["permissions"].items == {}
+    assert access_context["requests"].items[request.id].status is AccessRequestStatus.REJECTED
+    assert new_request.status_code == 404
+    assert "research.txt" in request_page.text and "Locked" in request_page.text
+    assert f'value="{document.id}"' not in request_page.text

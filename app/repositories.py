@@ -11,6 +11,7 @@ from app.models import (
     AccessRequest,
     AccessRequestStatus,
     DocumentPermission,
+    DocumentState,
     Role,
     User,
     VaultDocument,
@@ -238,6 +239,7 @@ class MongoVaultRepository:
                 "nonce": document.nonce,
                 "created_at": document.created_at,
                 "usable": document.usable,
+                "state": document.state.value,
             }
         )
         return document
@@ -260,6 +262,57 @@ class MongoVaultRepository:
 
     async def find_by_id(self, document_id: Any) -> VaultDocument | None:
         return self._to_document(await self.collection.find_one({"_id": document_id}))
+
+    async def list_all(self) -> list[VaultDocument]:
+        cursor = self.collection.find({}).sort("created_at", DESCENDING)
+        documents: list[VaultDocument] = []
+        async for item in cursor:
+            document = self._to_document(item)
+            if document is not None:
+                documents.append(document)
+        return documents
+
+    async def transition_state(
+        self,
+        document_id: Any,
+        expected_state: DocumentState,
+        target_state: DocumentState,
+        changed_at: datetime,
+        changed_by: Any,
+        reason: str,
+    ) -> VaultDocument | None:
+        if expected_state is DocumentState.ACTIVE:
+            state_filter: dict[str, Any] = {
+                "$or": [
+                    {"state": DocumentState.ACTIVE.value},
+                    {"state": {"$exists": False}},
+                    {"state": None},
+                ]
+            }
+        else:
+            state_filter = {"state": expected_state.value}
+
+        update: dict[str, Any] = {"$set": {"state": target_state.value}}
+        if target_state is DocumentState.LOCKED:
+            update["$set"].update(
+                {
+                    "locked_at": changed_at,
+                    "locked_by": changed_by,
+                    "lock_reason": reason,
+                }
+            )
+        else:
+            update["$unset"] = {
+                "locked_at": "",
+                "locked_by": "",
+                "lock_reason": "",
+            }
+        item = await self.collection.find_one_and_update(
+            {"_id": document_id, "usable": {"$ne": False}, **state_filter},
+            update,
+            return_document=ReturnDocument.AFTER,
+        )
+        return self._to_document(item)
 
     async def list_usable_not_owned(self, owner_id: Any) -> list[VaultDocument]:
         cursor = self.collection.find(
@@ -287,6 +340,10 @@ class MongoVaultRepository:
                 nonce=bytes(item["nonce"]),
                 created_at=_utc(item["created_at"]),
                 usable=item.get("usable", True),
+                state=DocumentState(item.get("state") or DocumentState.ACTIVE.value),
+                locked_at=_utc(item.get("locked_at")),
+                locked_by=item.get("locked_by"),
+                lock_reason=item.get("lock_reason"),
             )
         except (KeyError, TypeError, ValueError):
             return None

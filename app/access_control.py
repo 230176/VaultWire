@@ -14,6 +14,7 @@ from app.models import (
     DocumentAccessDecision,
     DocumentAccessKind,
     DocumentPermission,
+    DocumentState,
     Role,
     User,
     VaultDocument,
@@ -51,6 +52,14 @@ class InvalidPermissionExpiry(ValueError):
     pass
 
 
+class DocumentStateTransitionError(ValueError):
+    pass
+
+
+class DocumentGovernanceNotFound(LookupError):
+    pass
+
+
 @dataclass(frozen=True)
 class RequestableDocumentView:
     document: VaultDocument
@@ -74,6 +83,14 @@ class SharedDocumentView:
     permission: DocumentPermission
     document: VaultDocument
     owner: User | None
+    access_kind: DocumentAccessKind
+
+
+@dataclass(frozen=True)
+class GovernanceDocumentView:
+    document: VaultDocument
+    owner: User | None
+    locking_administrator: User | None
 
 
 @dataclass(frozen=True)
@@ -108,9 +125,9 @@ def validate_reason(reason: str, *, label: str) -> str:
 class DocumentAuthorizationService:
     """The only policy boundary for document reads.
 
-    Usability is deliberately checked before ownership or sharing so a future
-    document-lock implementation can override both without changing permission
-    records or download routes.
+    Usability and governance state are checked before ownership or sharing so a
+    document lock overrides both without changing permission records or download
+    routes.
     """
 
     def __init__(self, documents: Any, permissions: Any) -> None:
@@ -125,6 +142,8 @@ class DocumentAuthorizationService:
             return DocumentAccessDecision(DocumentAccessKind.NOT_FOUND)
         if not document.usable:
             return DocumentAccessDecision(DocumentAccessKind.UNUSABLE, document)
+        if document.state is DocumentState.LOCKED:
+            return DocumentAccessDecision(DocumentAccessKind.LOCKED, document)
         if actor.role is not Role.EMPLOYEE:
             return DocumentAccessDecision(DocumentAccessKind.DENIED, document)
         if document.owner_id == actor.id:
@@ -133,17 +152,20 @@ class DocumentAuthorizationService:
         permission = await self.permissions.find_relationship(actor.id, document.id)
         if permission is None:
             return DocumentAccessDecision(DocumentAccessKind.DENIED, document)
+        kind = self.permission_access_kind(permission, now=now)
+        return DocumentAccessDecision(kind, document, permission)
+
+    @staticmethod
+    def permission_access_kind(
+        permission: DocumentPermission, *, now: datetime | None = None
+    ) -> DocumentAccessKind:
         if not permission.active or permission.revoked_at is not None:
-            return DocumentAccessDecision(
-                DocumentAccessKind.REVOKED, document, permission
-            )
+            return DocumentAccessKind.REVOKED
         expires_at = utc_datetime(permission.expires_at)
         checked_at = utc_datetime(now) if now is not None else datetime.now(UTC)
         if expires_at is not None and expires_at <= checked_at:
-            return DocumentAccessDecision(
-                DocumentAccessKind.EXPIRED, document, permission
-            )
-        return DocumentAccessDecision(DocumentAccessKind.SHARED, document, permission)
+            return DocumentAccessKind.EXPIRED
+        return DocumentAccessKind.SHARED
 
 
 class AccessControlService:
@@ -183,6 +205,7 @@ class AccessControlService:
             requester.role is not Role.EMPLOYEE
             or document is None
             or not document.usable
+            or document.state is not DocumentState.ACTIVE
             or document.owner_id == requester.id
         ):
             raise DocumentNotRequestable
@@ -248,13 +271,15 @@ class AccessControlService:
         document = await self.documents.find_by_id(request.document_id)
         if document is None or not document.usable:
             raise DocumentNotRequestable
-        requester = await self.users.find_by_id(request.requester_id)
 
         normalized_decision = decision.strip().casefold()
         now = datetime.now(UTC)
         permission = None
         normalized_expiry = utc_datetime(expires_at)
         if normalized_decision == AccessRequestStatus.APPROVED.value:
+            if document.state is not DocumentState.ACTIVE:
+                raise DocumentNotRequestable
+            requester = await self.users.find_by_id(request.requester_id)
             if (
                 requester is None
                 or requester.role is not Role.EMPLOYEE
@@ -265,6 +290,7 @@ class AccessControlService:
                 raise InvalidPermissionExpiry("Permission expiry must be in the future.")
             status = AccessRequestStatus.APPROVED
         elif normalized_decision == AccessRequestStatus.REJECTED.value:
+            requester = await self.users.find_by_id(request.requester_id)
             status = AccessRequestStatus.REJECTED
             normalized_expiry = None
         else:
@@ -400,14 +426,95 @@ class AccessControlService:
     async def list_shared_with_me(self, grantee: User) -> list[SharedDocumentView]:
         views = []
         for permission in await self.permissions.list_for_grantee(grantee.id):
-            decision = await self.authorization.authorize_read(
-                grantee, permission.document_id
-            )
-            if decision.kind is not DocumentAccessKind.SHARED or decision.document is None:
+            if self.authorization.permission_access_kind(permission) is not DocumentAccessKind.SHARED:
                 continue
-            owner = await self.users.find_by_id(decision.document.owner_id)
-            views.append(SharedDocumentView(permission, decision.document, owner))
+            document = await self.documents.find_by_id(permission.document_id)
+            if document is None or not document.usable:
+                continue
+            decision = await self.authorization.authorize_read(grantee, document.id)
+            if decision.kind not in {DocumentAccessKind.SHARED, DocumentAccessKind.LOCKED}:
+                continue
+            owner = await self.users.find_by_id(document.owner_id)
+            views.append(SharedDocumentView(permission, document, owner, decision.kind))
         return views
+
+    async def list_governance_documents(
+        self, administrator: User
+    ) -> list[GovernanceDocumentView]:
+        if administrator.role is not Role.ADMINISTRATOR:
+            raise DocumentGovernanceNotFound
+        views = []
+        for document in await self.documents.list_all():
+            owner = await self.users.find_by_id(document.owner_id)
+            locking_administrator = (
+                await self.users.find_by_id(document.locked_by)
+                if document.locked_by is not None
+                else None
+            )
+            views.append(GovernanceDocumentView(document, owner, locking_administrator))
+        return views
+
+    async def change_document_state(
+        self,
+        administrator: User,
+        document_id: str,
+        target_state: DocumentState,
+        reason: str,
+        *,
+        source_ip: str | None,
+        user_agent: str | None,
+    ) -> VaultDocument:
+        if administrator.role is not Role.ADMINISTRATOR:
+            raise DocumentGovernanceNotFound
+        label = "Lock reason" if target_state is DocumentState.LOCKED else "Unlock reason"
+        normalized_reason = validate_reason(reason, label=label)
+        try:
+            parsed_document_id = ObjectId(document_id)
+        except Exception as exc:
+            raise DocumentGovernanceNotFound from exc
+        expected_state = (
+            DocumentState.ACTIVE
+            if target_state is DocumentState.LOCKED
+            else DocumentState.LOCKED
+        )
+        changed_at = datetime.now(UTC)
+        document = await self.documents.transition_state(
+            parsed_document_id,
+            expected_state,
+            target_state,
+            changed_at,
+            administrator.id,
+            normalized_reason,
+        )
+        if document is None:
+            existing = await self.documents.find_by_id(parsed_document_id)
+            if existing is None or not existing.usable:
+                raise DocumentGovernanceNotFound
+            raise DocumentStateTransitionError(
+                f"Document is already {existing.state.value}."
+            )
+        owner = await self.users.find_by_id(document.owner_id)
+        await self.audit.record(
+            "vault.document_locked"
+            if target_state is DocumentState.LOCKED
+            else "vault.document_unlocked",
+            username=owner.username if owner else str(document.owner_id),
+            user_id=document.owner_id,
+            source_ip=source_ip,
+            user_agent=user_agent,
+            outcome="success",
+            reason=normalized_reason,
+            actor_username=administrator.username,
+            actor_user_id=administrator.id,
+            resource_id=document.id,
+            context={
+                "document_owner_id": document.owner_id,
+                "previous_state": expected_state.value,
+                "state": target_state.value,
+                "transitioned_at": changed_at,
+            },
+        )
+        return document
 
     async def list_permissions(self) -> list[PermissionView]:
         views = []
