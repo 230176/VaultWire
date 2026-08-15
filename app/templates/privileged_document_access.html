@@ -1,0 +1,28 @@
+{% extends "app_shell.html" %}
+
+{% block title %}Privileged Document Access · NepShield{% endblock %}
+
+{% block workspace %}
+  <section class="users-heading">
+    <p class="eyebrow">Exceptional administrator action</p>
+    <h1>Privileged Document Access</h1>
+    <p>This one-time action bypasses normal owner, sharing, and locked-state restrictions. It is audited and does not create ownership, a permission, a share relationship, or a persistent administrator grant.</p>
+  </section>
+
+  {% if error %}<div class="form-alert" role="alert">{{ error }}</div>{% endif %}
+
+  <section class="management-card" aria-labelledby="privileged-access-heading">
+    <h2 id="privileged-access-heading">Confirm exceptional access</h2>
+    <p class="card-intro"><strong>Document:</strong> {{ item.document.original_filename }}<br><strong>Owner:</strong> {{ item.owner.display_name if item.owner else 'Unavailable' }}{% if item.owner %} ({{ item.owner.username }}){% endif %}<br><strong>State:</strong> {{ item.document.state.value | title }}</p>
+    <form method="post" action="/administrator/documents/{{ item.document.id }}/privileged-access" class="management-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="privileged-reason">Mandatory investigation or recovery reason</label>
+      <textarea id="privileged-reason" name="reason" maxlength="1000" required></textarea>
+      <p class="vault-privacy-note">Submitting performs exactly this download attempt. Every later access requires another explicit action and reason.</p>
+      <div class="button-row">
+        <button type="submit" class="button-danger">Perform audited privileged access</button>
+        <a class="button-download" href="/administrator/documents">Cancel</a>
+      </div>
+    </form>
+  </section>
+{% endblock %}
